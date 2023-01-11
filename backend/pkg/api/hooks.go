@@ -104,6 +104,13 @@ type ConsoleHooks interface {
 	// The information will be baked into the index.html so that the Frontend knows about it
 	// at startup, which might be important to not block rendering (e.g. SSO enabled -> render login).
 	EnabledFeatures() []string
+
+	// EndpointCompatibility returns information what endpoints are available to the frontend.
+	// This considers the active configuration (e.g. is secret store enabled), target cluster
+	// version and what features are supported by our upstream systems.
+	// The response of this hook will be merged into the response that was originally
+	// composed by Console.
+	EndpointCompatibility() []console.EndpointCompatibilityEndpoint
 }
 
 // defaultHooks is the default hook which is used if you don't attach your own hooks
@@ -253,4 +260,8 @@ func (*defaultHooks) ConsoleLicenseInformation(_ context.Context) redpanda.Licen
 
 func (*defaultHooks) EnabledFeatures() []string {
 	return []string{}
+}
+
+func (*defaultHooks) EndpointCompatibility() []console.EndpointCompatibilityEndpoint {
+	return nil
 }
