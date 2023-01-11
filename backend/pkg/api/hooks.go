@@ -25,8 +25,9 @@ import (
 // additional functionality. In order to run your own Hooks you must construct a Hooks instance and
 // run attach them to your own instance of Api.
 type Hooks struct {
-	Route   RouteHooks
-	Console ConsoleHooks
+	Route         RouteHooks
+	Authorization AuthorizationHooks
+	Console       ConsoleHooks
 }
 
 // RouteHooks allow you to modify the Router
@@ -45,9 +46,9 @@ type RouteHooks interface {
 	ConfigRouter(router chi.Router)
 }
 
-// ConsoleHooks include all functions which allow you to intercept the requests at various
+// AuthorizationHooks include all functions which allow you to intercept the requests at various
 // endpoints where RBAC rules may be applied.
-type ConsoleHooks interface {
+type AuthorizationHooks interface {
 	// Topic Hooks
 	CanSeeTopic(ctx context.Context, topicName string) (bool, *rest.Error)
 	CanCreateTopic(ctx context.Context, topicName string) (bool, *rest.Error)
@@ -92,8 +93,12 @@ type ConsoleHooks interface {
 	CanCreateKafkaUsers(ctx context.Context) (bool, *rest.Error)
 	CanDeleteKafkaUsers(ctx context.Context) (bool, *rest.Error)
 	IsProtectedKafkaUser(userName string) bool
+}
 
-	// Console Hooks
+// ConsoleHooks are hooks for providing additional context to the Frontend where needed.
+// This could be information about what license is used, what enterprise features are
+// enabled etc.
+type ConsoleHooks interface {
 	// ConsoleLicenseInformation returns the license information for Console.
 	// Based on the returned license the frontend will display the
 	// appropriate UI and also warnings if the license is (about to be) expired.
@@ -119,8 +124,9 @@ type defaultHooks struct{}
 func newDefaultHooks() *Hooks {
 	d := &defaultHooks{}
 	return &Hooks{
-		Route:   d,
-		Console: d,
+		Authorization: d,
+		Route:         d,
+		Console:       d,
 	}
 }
 
@@ -130,7 +136,7 @@ func (*defaultHooks) ConfigWsRouter(_ chi.Router)       {}
 func (*defaultHooks) ConfigInternalRouter(_ chi.Router) {}
 func (*defaultHooks) ConfigRouter(_ chi.Router)         {}
 
-// Console Hooks
+// Authorization Hooks
 func (*defaultHooks) CanSeeTopic(_ context.Context, _ string) (bool, *rest.Error) {
 	return true, nil
 }
@@ -254,6 +260,7 @@ func (*defaultHooks) IsProtectedKafkaUser(_ string) bool {
 	return false
 }
 
+// Console hooks
 func (*defaultHooks) ConsoleLicenseInformation(_ context.Context) redpanda.License {
 	return redpanda.License{Source: redpanda.LicenseSourceConsole, Type: redpanda.LicenseTypeOpenSource, ExpiresAt: math.MaxInt32}
 }
