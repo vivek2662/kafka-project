@@ -24,7 +24,7 @@ type License struct {
 
 func newOpenSourceLicense() License {
 	return License{
-		Source:    LicenseSourceConsole,
+		Source:    LicenseSourceRedpanda,
 		Type:      LicenseTypeOpenSource,
 		ExpiresAt: math.MaxInt32,
 	}
