@@ -1004,7 +1004,7 @@ const apiStore = {
     },
 
 
-    async refreshConnectClusters(force?: boolean): Promise<void> {
+    async refreshConnectClusters(force?: boolean): Promise<void | KafkaConnectors> {
         return cachedApiRequest<KafkaConnectors | null>(`${appConfig.restBasePath}/kafka-connect/connectors`, force)
             .then(v => {
                 // backend error
@@ -1024,6 +1024,7 @@ const apiStore = {
                     addFrontendFieldsForConnectCluster(cluster);
 
                 this.connectConnectors = v;
+                return this.connectConnectors;
             }, addError);
     },
 
@@ -1045,8 +1046,8 @@ const apiStore = {
     },
 
     // AdditionalInfo = list of plugins
-    refreshClusterAdditionalInfo(clusterName: string, force?: boolean): void {
-        cachedApiRequest<ClusterAdditionalInfo | null>(`${appConfig.restBasePath}/kafka-connect/clusters/${clusterName}`, force)
+    refreshClusterAdditionalInfo(clusterName: string, force?: boolean): Promise<ClusterAdditionalInfo | void> {
+        return cachedApiRequest<ClusterAdditionalInfo | null>(`${appConfig.restBasePath}/kafka-connect/clusters/${clusterName}`, force)
             .then(v => {
                 if (!v) {
                     this.connectAdditionalClusterInfo.delete(clusterName);
@@ -1054,6 +1055,7 @@ const apiStore = {
                 else {
                     this.connectAdditionalClusterInfo.set(clusterName, v);
                 }
+                return this.connectAdditionalClusterInfo.get(clusterName);
             }, addError);
     },
 

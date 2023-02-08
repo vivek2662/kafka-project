@@ -18,7 +18,7 @@ import { api } from '../../../state/backendApi';
 import { uiState } from '../../../state/uiState';
 import { appGlobal } from '../../../state/appGlobal';
 import { ClusterConnectors, ConnectorValidationResult } from '../../../state/restInterfaces';
-import { Alert, Select, Table } from 'antd';
+import { Alert, Select, Skeleton, Table } from 'antd';
 import { HiddenRadioList } from '../../misc/HiddenRadioList';
 import { ConnectorBoxCard, ConnectorPlugin } from './ConnectorBoxCard';
 import { /* ConfigPage */ ConfigPage } from './dynamic-ui/components';
@@ -28,7 +28,7 @@ import KowlEditor from '../../misc/KowlEditor';
 import styles from './CreateConnector.module.scss';
 import Section from '../../misc/Section';
 import PageContent from '../../misc/PageContent';
-import { connectClustersState } from '../../../state/connect/state';
+import { ConnectClusterStore, ConnectorValidationError } from '../../../state/connect/state';
 const { Option } = Select;
 
 const ConnectorType = observer(
@@ -48,7 +48,6 @@ const ConnectorType = observer(
                             style={{ minWidth: '300px' }}
                             placeholder="Choose Connect Cluster…"
                             onChange={(clusterName) => {
-                                api.refreshClusterAdditionalInfo(clusterName, true);
                                 p.onActiveClusterChange(clusterName);
                             }}
                             value={p.activeCluster ?? undefined}
@@ -124,19 +123,25 @@ interface ConnectorWizardProps {
 
 const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorWizardProps) => {
     const history = appGlobal.history;
-
     const [currentStep, setCurrentStep] = useState(0);
     const [selectedPlugin, setSelectedPlugin] = useState<ConnectorPlugin | null>(null);
     const [invalidValidationResult, setInvalidValidationResult] = useState<ConnectorValidationResult | null>(null);
     const [validationFailure, setValidationFailure] = useState<unknown>(null);
     const [creationFailure, setCreationFailure] = useState<unknown>(null);
     const [genericFailure, setGenericFailure] = useState<Error | null>(null);
+    const [stringifiedConfig, setStringifiedConfig] = useState<null | any>({});
+    const [connectClusterStore, setConnectClusterStore] = useState(ConnectClusterStore.getInstance(activeCluster));
 
     useEffect(() => {
-        if (connectClusters.length) {
-            api.refreshClusterAdditionalInfo(activeCluster, true);
-        }
-    }, [connectClusters, activeCluster]);
+        const init = async () => {
+            await connectClusterStore.setup();
+        };
+        init();
+    }, [connectClusterStore]);
+
+    useEffect(() => {
+        setConnectClusterStore(ConnectClusterStore.getInstance(activeCluster));
+    }, [activeCluster]);
 
     const clearErrors = () => {
         setCreationFailure(null);
@@ -181,27 +186,23 @@ const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorW
                             />
                         </div>
                     ) : null}
-                    {activeCluster && selectedPlugin ? (
-                        <ConfigPage
-                            connectorStore={connectClustersState.getNewConnectorState({
-                                clusterName: activeCluster!,
-                                pluginClass: selectedPlugin!.class,
-                            })}
-                        />
+                    {selectedPlugin ? (
+                        <ConfigPage connectorStore={connectClusterStore.getConnector(selectedPlugin.class)} />
                     ) : (
                         <div>no cluster or plugin selected</div>
                     )}
                 </>
             ),
+            transitionConditionMet: async () => {
+                if (selectedPlugin) {
+                    connectClusterStore.getConnector(selectedPlugin.class).getConfigObject();
+                    setStringifiedConfig(connectClusterStore.getConnector(selectedPlugin.class).jsonText);
+                    return { conditionMet: true };
+                }
+                return { conditionMet: false };
+            },
             postConditionMet: () => true,
         },
-        // {
-        //   title: 'Additional Properties',
-        //   description: 'Add advanced connector configs, SMTs, etc.',
-        //   icon: <SettingOutlined/>,
-        //   content: 'More config options...',
-        //   postConditionMet: () => true,
-        // },
         {
             title: 'Review',
             description: 'Review created connector config.',
@@ -209,12 +210,10 @@ const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorW
             content: selectedPlugin && (
                 <Review
                     connectorPlugin={selectedPlugin}
-                    properties={
-                        connectClustersState.getNewConnectorState({
-                            clusterName: activeCluster!,
-                            pluginClass: selectedPlugin!.class,
-                        })?.jsonText
-                    }
+                    properties={stringifiedConfig}
+                    onChange={(editorContent) => {
+                        setStringifiedConfig(editorContent);
+                    }}
                     invalidValidationResult={invalidValidationResult}
                     validationFailure={validationFailure}
                     creationFailure={creationFailure}
@@ -224,15 +223,25 @@ const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorW
             postConditionMet: () => true,
             async transitionConditionMet(): Promise<{ conditionMet: boolean }> {
                 clearErrors();
+
+                const connectorRef = connectClusterStore.getConnector(selectedPlugin!.class);
+
+                connectorRef.updateProperties(JSON.parse(stringifiedConfig));
+
+                const propertiesObject: Record<string, any> = connectorRef.getConfigObject();
                 try {
-                    const validationResult = await connectClustersState.createConnector({
-                        clusterName: activeCluster,
-                        pluginClass: selectedPlugin!.class,
-                    });
-                    if (validationResult) {
+                    const validationResult = await api.validateConnectorConfig(activeCluster, selectedPlugin!.class, propertiesObject);
+
+                    if (validationResult.error_count > 0) {
                         setInvalidValidationResult(validationResult);
                         return { conditionMet: false };
                     }
+                } catch (e) {
+                    throw new ConnectorValidationError(e);
+                }
+
+                try {
+                    await connectClusterStore.createConnector(selectedPlugin!.class);
                 } catch (e: any) {
                     switch (e?.name) {
                         case 'ConnectorValidationError':
@@ -253,6 +262,13 @@ const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorW
     ];
 
     const isLast = () => currentStep === steps.length - 1;
+
+    if (!connectClusterStore.isInitialized)
+        return (
+            <div>
+                <Skeleton loading={true} active={true} paragraph={{ rows: 20, width: '100%' }} />
+            </div>
+        );
 
     return (
         <Wizard
@@ -283,6 +299,7 @@ const ConnectorWizard = observer(({ connectClusters, activeCluster }: ConnectorW
 
 interface ReviewProps {
     connectorPlugin: ConnectorPlugin | null;
+    onChange: (editorContent: string | undefined) => void;
     properties?: string;
     invalidValidationResult: ConnectorValidationResult | null;
     validationFailure: unknown;
@@ -290,7 +307,15 @@ interface ReviewProps {
     genericFailure: Error | null;
 }
 
-function Review({ connectorPlugin, properties, invalidValidationResult, validationFailure, creationFailure, genericFailure }: ReviewProps) {
+function Review({
+    connectorPlugin,
+    properties,
+    invalidValidationResult,
+    validationFailure,
+    creationFailure,
+    genericFailure,
+    onChange,
+}: ReviewProps) {
     return (
         <>
             {connectorPlugin != null ? (
@@ -335,7 +360,7 @@ function Review({ connectorPlugin, properties, invalidValidationResult, validati
                     message={
                         <>
                             <strong>An error occurred</strong>
-                            <p>{String(creationFailure)}</p>
+                            <p>{String(genericFailure)}</p>
                         </>
                     }
                 />
@@ -343,7 +368,7 @@ function Review({ connectorPlugin, properties, invalidValidationResult, validati
 
             <h2>Connector Properties</h2>
             <div style={{ margin: '0 auto 1.5rem' }}>
-                <KowlEditor language="json" value={properties} height="600px" options={{ readOnly: true }} />
+                <KowlEditor language="json" value={properties} height="600px" onChange={onChange} />
             </div>
         </>
     );
